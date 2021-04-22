@@ -526,16 +526,22 @@ def evaluate_wall_thickness(seg_name, output_name_stem, part=None):
 
     # Evaluate the wall thickness per AHA segment and save to a csv file
     table_thickness = np.zeros(17)
+    table_thickness_max = np.zeros(17)
     np_thickness = numpy_support.vtk_to_numpy(thickness).astype(np.float32)
     np_points_aha = numpy_support.vtk_to_numpy(points_aha).astype(np.int8)
 
     for i in range(16):
         table_thickness[i] = np.mean(np_thickness[np_points_aha == (i + 1)])
+        table_thickness_max[i] = np.max(np_thickness[np_points_aha == (i + 1)])
     table_thickness[-1] = np.mean(np_thickness)
+    table_thickness_max[-1] = np.max(np_thickness)
 
     index = [str(x) for x in np.arange(1, 17)] + ['Global']
     df = pd.DataFrame(table_thickness, index=index, columns=['Thickness'])
     df.to_csv('{0}.csv'.format(output_name_stem))
+
+    df = pd.DataFrame(table_thickness_max, index=index, columns=['Thickness_Max'])
+    df.to_csv('{0}_max.csv'.format(output_name_stem))
 
 
 def extract_myocardial_contour(seg_name, contour_name_stem, part=None, three_slices=False):
