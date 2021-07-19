@@ -1,3 +1,6 @@
+## Fork of ukbb cardiac
+This is my fork of the origina project used to create segmentation masks
+
 ## Overview
 
 **ukbb_cardiac** is a toolbox used for processing and analysing cardiovascular magnetic resonance (CMR) images from the [UK Biobank Imaging Study](http://imaging.ukbiobank.ac.uk/). It consists of several parts:
