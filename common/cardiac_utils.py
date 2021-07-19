@@ -23,6 +23,8 @@ import matplotlib.pyplot as plt
 from vtk.util import numpy_support
 from scipy import interpolate
 import skimage
+import skimage.measure
+from tqdm import tqdm
 from ukbb_cardiac.common.image_utils import *
 
 
@@ -190,7 +192,7 @@ def determine_aha_coordinate_system(seg_sa, affine_sa):
     rv = get_largest_cc(rv).astype(np.uint8)
 
     # Extract epicardial contour
-    _, contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     epi_contour = contours[0][:, 0, :]
 
     # Find the septum, which is the intersection between LV and RV
@@ -352,7 +354,151 @@ def determine_aha_segment_id(point, lv_centre, aha_axis, part):
         print('Error: unknown part {0}!'.format(part))
         exit(0)
     return seg_id
+def evaluate_wall_thickness_per_frame(seg_name, part=None, return_max=False):
 
+    nim = nib.load(seg_name)
+    Z = nim.header['dim'][3]
+    affine = nim.affine 
+    cnt=0
+
+    X,Y,Z,T = nim.get_data().shape
+    thickness_per_frame = []
+    for i in range(T):
+
+        cnt+=1
+        print(f"Processing {cnt}")
+        seg = nim.get_data()[:,:,:,i]
+
+        X, Y, Z =  seg.shape
+        print((X,Y,Z))
+
+        # Label class in the segmentation
+        label = {'BG': 0, 'LV': 1, 'Myo': 2, 'RV': 3}
+
+        # Determine the AHA coordinate system using the mid-cavity slice
+        aha_axis = determine_aha_coordinate_system(seg, affine)
+
+        # Determine the AHA part of each slice
+        part_z = {}
+        if not part:
+            part_z = determine_aha_part(seg, affine)
+        else:
+            part_z = {z: part for z in range(Z)}
+
+        # Construct the points set to represent the endocardial contours
+        endo_points = vtk.vtkPoints()
+        thickness = vtk.vtkDoubleArray()
+        thickness.SetName('Thickness')
+        points_aha = vtk.vtkIntArray()
+        points_aha.SetName('Segment ID')
+        point_id = 0
+        lines = vtk.vtkCellArray()
+        # For each slice
+        for z in range(Z):
+            # Check whether there is endocardial segmentation and it is not too small,
+            # e.g. a single pixel, which either means the structure is missing or
+            # causes problem in contour interpolation.
+            seg_z = seg[:, :, z]
+            endo = (seg_z == label['LV']).astype(np.uint8)
+            endo = get_largest_cc(endo).astype(np.uint8)
+            myo = (seg_z == label['Myo']).astype(np.uint8)
+            myo = remove_small_cc(myo).astype(np.uint8)
+            epi = (endo | myo).astype(np.uint8)
+            epi = get_largest_cc(epi).astype(np.uint8)
+            pixel_thres = 10
+            if (np.sum(endo) < pixel_thres) or (np.sum(myo) < pixel_thres):
+                continue
+
+            # Calculate the centre of the LV cavity
+            # Get the largest component in case we have a bad segmentation
+            cx, cy = [np.mean(x) for x in np.nonzero(endo)]
+            lv_centre = np.dot(affine, np.array([cx, cy, z, 1]))[:3]
+
+            # Extract endocardial contour
+            # Note: cv2 considers an input image as a Y x X array, which is different
+            # from nibabel which assumes a X x Y array.
+            contours, _ = cv2.findContours(cv2.inRange(endo, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+            endo_contour = contours[0][:, 0, :]
+
+            # Extract epicardial contour
+            contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+            epi_contour = contours[0][:, 0, :]
+
+            # Smooth the contours
+            endo_contour = approximate_contour(endo_contour, periodic=True)
+            epi_contour = approximate_contour(epi_contour, periodic=True)
+
+            # A polydata representation of the epicardial contour
+            epi_points_z = vtk.vtkPoints()
+            for y, x in epi_contour:
+                p = np.dot(affine, np.array([x, y, z, 1]))[:3]
+                epi_points_z.InsertNextPoint(p)
+            epi_poly_z = vtk.vtkPolyData()
+            epi_poly_z.SetPoints(epi_points_z)
+
+            # Point locator for the epicardial contour
+            locator = vtk.vtkPointLocator()
+            locator.SetDataSet(epi_poly_z)
+            locator.BuildLocator()
+
+            # For each point on endocardium, find the closest point on epicardium
+            N = endo_contour.shape[0]
+            for i in range(N):
+                y, x = endo_contour[i]
+
+                # The world coordinate of this point
+                p = np.dot(affine, np.array([x, y, z, 1]))[:3]
+                endo_points.InsertNextPoint(p)
+
+                # The closest epicardial point
+                q = np.array(epi_points_z.GetPoint(locator.FindClosestPoint(p)))
+
+                # The distance from endo to epi
+                dist_pq = np.linalg.norm(q - p)
+
+                # Add the point data
+                thickness.InsertNextTuple1(dist_pq)
+                seg_id = determine_aha_segment_id(p, lv_centre, aha_axis, part_z[z])
+                points_aha.InsertNextTuple1(seg_id)
+
+                # Record the first point of the current contour
+                if i == 0:
+                    contour_start_id = point_id
+
+                # Add the line
+                if i == (N - 1):
+                    lines.InsertNextCell(2, [point_id, contour_start_id])
+                else:
+                    lines.InsertNextCell(2, [point_id, point_id + 1])
+
+                # Increment the point index
+                point_id += 1
+
+        # Save to a vtk file
+        endo_poly = vtk.vtkPolyData()
+        endo_poly.SetPoints(endo_points)
+        endo_poly.GetPointData().AddArray(thickness)
+        endo_poly.GetPointData().AddArray(points_aha)
+        endo_poly.SetLines(lines)
+
+        # Evaluate the wall thickness per AHA segment and save to a csv file
+        table_thickness = np.zeros(17)
+        table_thickness_max = np.zeros(17)
+        np_thickness = numpy_support.vtk_to_numpy(thickness).astype(np.float32)
+        np_points_aha = numpy_support.vtk_to_numpy(points_aha).astype(np.int8)
+
+        for i in range(16):
+            table_thickness[i] = np.mean(np_thickness[np_points_aha == (i + 1)])
+            table_thickness_max[i] = np.max(np_thickness[np_points_aha == (i + 1)])
+        table_thickness[-1] = np.mean(np_thickness)
+        table_thickness_max[-1] = np.max(np_thickness)
+
+        if(return_max):
+            thickness_per_frame.append(table_thickness_max[-1])
+        else:
+            thickness_per_frame.append(table_thickness[-1])
+
+    return thickness_per_frame
 
 def evaluate_wall_thickness(seg_name, output_name_stem, part=None):
     """ Evaluate myocardial wall thickness. """
@@ -417,11 +563,11 @@ def evaluate_wall_thickness(seg_name, output_name_stem, part=None):
         # Extract endocardial contour
         # Note: cv2 considers an input image as a Y x X array, which is different
         # from nibabel which assumes a X x Y array.
-        _, contours, _ = cv2.findContours(cv2.inRange(endo, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contours, _ = cv2.findContours(cv2.inRange(endo, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
         endo_contour = contours[0][:, 0, :]
 
         # Extract epicardial contour
-        _, contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
         epi_contour = contours[0][:, 0, :]
 
         # Smooth the contours
@@ -612,7 +758,7 @@ def extract_myocardial_contour(seg_name, contour_name_stem, part=None, three_sli
         lv_centre = np.dot(affine, np.array([cx, cy, z, 1]))[:3]
 
         # Extract epicardial contour
-        _, contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
         epi_contour = contours[0][:, 0, :]
         epi_contour = approximate_contour(epi_contour, periodic=True)
 
@@ -666,7 +812,7 @@ def extract_myocardial_contour(seg_name, contour_name_stem, part=None, three_sli
         # Extract endocardial contour
         # Note: cv2 considers an input image as a Y x X array, which is different
         # from nibabel which assumes a X x Y array.
-        _, contours, _ = cv2.findContours(cv2.inRange(endo, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+        contours, _ = cv2.findContours(cv2.inRange(endo, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
         endo_contour = contours[0][:, 0, :]
         endo_contour = approximate_contour(endo_contour, periodic=True)
 
@@ -1187,11 +1333,11 @@ def extract_la_myocardial_contour(seg_la_name, seg_sa_name, contour_name):
     # Extract endocardial contour
     # Note: cv2 considers an input image as a Y x X array, which is different
     # from nibabel which assumes a X x Y array.
-    _, contours, _ = cv2.findContours(cv2.inRange(endo, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    contours, _ = cv2.findContours(cv2.inRange(endo, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     endo_contour = contours[0][:, 0, :]
 
     # Extract epicardial contour
-    _, contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
+    contours, _ = cv2.findContours(cv2.inRange(epi, 1, 1), cv2.RETR_TREE, cv2.CHAIN_APPROX_NONE)
     epi_contour = contours[0][:, 0, :]
 
     # Record the points located on the mitral valve plane.
@@ -1741,7 +1887,7 @@ def aorta_pass_quality_control(image, seg):
         pixel_thres = 10
         for t in range(T):
             seg_t = seg[:, :, :, t]
-            cc, n_cc = skimage.measure.label(seg_t == l, neighbors=8, return_num=True)
+            cc, n_cc = skimage.measure.label(seg_t == l, return_num=True)
             count_cc = 0
             for i in range(1, n_cc + 1):
                 binary_cc = (cc == i)

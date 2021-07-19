@@ -19,9 +19,13 @@ import numpy as np
 import nibabel as nib
 import tensorflow as tf
 from ukbb_cardiac.common.image_utils import rescale_intensity
+import tensorflow.compat.v1 as tf
+import math
+from tqdm import tqdm
 
 
 """ Deployment parameters """
+tf.disable_v2_behavior()
 FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_enum('seq_name', 'sa',
                          ['sa', 'la_2ch', 'la_4ch'],
@@ -43,9 +47,12 @@ tf.app.flags.DEFINE_boolean('seg4', False,
                             'on short-axis images and atrial segmentation on long-axis images,'
                             'the networks are trained using 3,975 subjects from Application 2964.')
 
+if __name__=="__main__":
 
-if __name__ == '__main__':
-    with tf.Session() as sess:
+    config = tf.ConfigProto(
+        device_count = {'GPU': 0}
+    )
+    with tf.Session(config=config) as sess:
         sess.run(tf.global_variables_initializer())
 
         # Import the computation graph and restore the variable values
@@ -59,8 +66,7 @@ if __name__ == '__main__':
         data_list = sorted(os.listdir(FLAGS.data_dir))
         processed_list = []
         table_time = []
-        for data in data_list:
-            print(data)
+        for data in tqdm(data_list):
             data_dir = os.path.join(FLAGS.data_dir, data)
 
             if FLAGS.seq_name == 'la_4ch' and FLAGS.seg4:

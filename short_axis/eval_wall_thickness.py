@@ -22,6 +22,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_dir', metavar='dir_name', default='', required=True)
     parser.add_argument('--output_csv', metavar='csv_name', default='', required=True)
+    parser.add_argument('--frame', metavar='frame', default='ED', required=True)
     args = parser.parse_args()
 
     data_path = args.data_dir
@@ -29,27 +30,31 @@ if __name__ == '__main__':
     table = []
     processed_list = []
     for data in data_list:
-        print(data)
-        data_dir = os.path.join(data_path, data)
+        try:
+            print(data)
+            data_dir = os.path.join(data_path, data)
 
-        # Quality control for segmentation at ED
-        # If the segmentation quality is low, evaluation of wall thickness may fail.
-        seg_sa_name = '{0}/seg_sa_ED.nii.gz'.format(data_dir)
-        if not os.path.exists(seg_sa_name):
-            continue
-        if not sa_pass_quality_control(seg_sa_name):
-            continue
+            # Quality control for segmentation at ED
+            # If the segmentation quality is low, evaluation of wall thickness may fail.
+            seg_sa_name = '{0}/seg_sa_{1}.nii.gz'.format(data_dir,args.frame)
 
-        # Evaluate myocardial wall thickness
-        evaluate_wall_thickness('{0}/seg_sa_ED.nii.gz'.format(data_dir),
-                                '{0}/wall_thickness_ED'.format(data_dir))
+            if not os.path.exists(seg_sa_name):
+                continue
+            if not sa_pass_quality_control(seg_sa_name):
+                continue
 
-        # Record data
-        if os.path.exists('{0}/wall_thickness_ED.csv'.format(data_dir)):
-            df = pd.read_csv('{0}/wall_thickness_ED.csv'.format(data_dir), index_col=0)
-            line = df['Thickness'].values
-            table += [line]
-            processed_list += [data]
+            # Evaluate myocardial wall thickness
+            evaluate_wall_thickness('{0}/seg_sa_{1}.nii.gz'.format(data_dir,args.frame),
+                                    '{0}/wall_thickness_{1}'.format(data_dir,args.frame))
+
+            # Record data
+            if os.path.exists('{0}/wall_thickness_{1}.csv'.format(data_dir,args.frame)):
+                df = pd.read_csv('{0}/wall_thickness_{1}.csv'.format(data_dir,args.frame), index_col=0)
+                line = df['Thickness'].values
+                table += [line]
+                processed_list += [data]
+        except:
+            print("This one is corrupted")
 
     # Save wall thickness for all the subjects
     df = pd.DataFrame(table, index=processed_list,

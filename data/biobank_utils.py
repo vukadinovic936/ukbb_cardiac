@@ -31,6 +31,8 @@ import pydicom as dicom
 import SimpleITK as sitk
 import numpy as np
 import nibabel as nib
+import string
+import random
 
 
 def repl(m):
