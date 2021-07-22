@@ -1,31 +1,30 @@
 ## Fork of ukbb cardiac
-This is my fork of the original project used to create segmentation masks
-
+This is a fork of the original project used to create segmentation masks.
 To get the segmentation of your nifti files run
 `bash -i segment.rc inser_data_directory`
 Note that data_directory here is a path to the directory that contains all the nifti files you want to segment. The example structure is:
-demo_image/
-	1/
-		la_4ch.nii.gz
-	2/
-		la_4ch.nii.gz
+demo_image/\
+&nbsp;1/\
+&nbsp;&nbsp;la_4ch.nii.gz\
+&nbsp;2/\
+&nbsp;&nbsp;la_4ch.nii.gz\
 This will generate seg_ files for each video in the dir. So the output will look like
-demo_image/
-	1/
-		la_4ch.nii.gz
-		la_4ch_ED.nii.gz
-		la_4ch.ES.nii.gz
-		seg4_la_4ch_ED.nii.gz
-		seg4_la_4ch_ES.nii.gz
-		seg4_la_4ch.nii.gz
-	2/
-		la_4ch.nii.gz
-		la_4ch_ED.nii.gz
-		la_4ch.ES.nii.gz
-		seg4_la_4ch_ED.nii.gz
-		seg4_la_4ch_ES.nii.gz
-		seg4_la_4ch.nii.gz
-
+demo_image/\
+&nbsp;1/\
+&nbsp;&nbsp;la_4ch.nii.gz\
+&nbsp;&nbsp;la_4ch_ED.nii.gz\
+&nbsp;&nbsp;la_4ch.ES.nii.gz\
+&nbsp;&nbsp;seg4_la_4ch_ED.nii.gz\
+&nbsp;&nbsp;seg4_la_4ch_ES.nii.gz\
+&nbsp;&nbsp;seg4_la_4ch.nii.gz\
+&nbsp;2/\
+&nbsp;&nbsp;la_4ch.nii.gz\
+&nbsp;&nbsp;la_4ch_ED.nii.gz\
+&nbsp;&nbsp;la_4ch.ES.nii.gz
+&nbsp;&nbsp;seg4_la_4ch_ED.nii.gz|
+&nbsp;&nbsp;seg4_la_4ch_ES.nii.gz\
+&nbsp;&nbsp;seg4_la_4ch.nii.gz\
+This fork contains model weights and sample image obtained from the original ukb_cardiac implementation.
 ## Overview
 
 **ukbb_cardiac** is a toolbox used for processing and analysing cardiovascular magnetic resonance (CMR) images from the [UK Biobank Imaging Study](http://imaging.ukbiobank.ac.uk/). It consists of several parts:
